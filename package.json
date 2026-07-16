@@ -1,6 +1,6 @@
 {
   "name": "lumina",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Lightweight Universal Multi-domain Intelligent Networking Architecture — hot-reloadable multi-domain web server",
   "license": "AGPL-3.0-only",
   "type": "module",

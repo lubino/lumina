@@ -8,7 +8,9 @@ async function runGit(
   args: string[],
   cwd?: string,
 ): Promise<{ ok: boolean; stdout: string; stderr: string }> {
-  const proc = Bun.spawn(["git", ...args], {
+  // safe.directory=* : git-cache may be owned by a different UID after image
+  // upgrades (e.g. Debian system user 999 → Alpine lumina 100).
+  const proc = Bun.spawn(["git", "-c", "safe.directory=*", ...args], {
     cwd,
     stdout: "pipe",
     stderr: "pipe",
