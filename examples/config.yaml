@@ -1,0 +1,24 @@
+# Local development configuration (used by `bun run dev` / startDevServer.sh)
+# Listen host/port are NOT in YAML — use LUMINA_HOST / LUMINA_PORT (defaults: 0.0.0.0 / 3030).
+
+domains:
+  example.com:
+    root: example.com
+    aliases:
+      - www.example.com
+      - localhost
+    git:
+      enabled: false
+
+  api.example.com:
+    root: example.com
+    aliases: []
+    git:
+      enabled: false
+
+  other.local:
+    root: other.local
+    aliases:
+      - other.localhost
+    git:
+      enabled: false

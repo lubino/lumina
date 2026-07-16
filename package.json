@@ -1,0 +1,31 @@
+{
+  "name": "lumina",
+  "version": "0.1.0",
+  "description": "Lightweight Universal Multi-domain Intelligent Networking Architecture — hot-reloadable multi-domain web server",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "lumina": "./src/main.ts"
+  },
+  "scripts": {
+    "dev": "LUMINA_CONFIG=./examples/config.yaml LUMINA_DOMAINS_DIR=./examples/domains LUMINA_GIT_CACHE_DIR=./.data/git-cache LUMINA_LOG_LEVEL=debug bun run --watch src/main.ts",
+    "dev:once": "LUMINA_CONFIG=./examples/config.yaml LUMINA_DOMAINS_DIR=./examples/domains LUMINA_GIT_CACHE_DIR=./.data/git-cache bun run src/main.ts",
+    "start": "bun run src/main.ts",
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "typecheck": "tsc --noEmit",
+    "build": "bun build ./src/main.ts --outdir=./dist --target=bun --minify"
+  },
+  "engines": {
+    "bun": ">=1.1.0"
+  },
+  "dependencies": {
+    "hono": "^4.7.11",
+    "yaml": "^2.8.0",
+    "zod": "^3.25.67"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.8.3"
+  }
+}

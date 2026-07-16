@@ -1,0 +1,25 @@
+# Example operator configuration for Lumina.
+# Copy and point LUMINA_CONFIG at your file.
+
+paths:
+  domains_dir: /data/domains
+  git_cache_dir: /data/git-cache
+
+domains:
+  example.com:
+    root: example.com
+    aliases:
+      - www.example.com
+    git:
+      enabled: false
+
+  # docs.example.com:
+  #   git:
+  #     enabled: true
+  #     # Public:  url: "https://git.example.com/user/docs.git"
+  #     # Private (recommended): embed a read token in the URL
+  #     url: "https://USER:TOKEN@git.example.com/user/docs.git"
+  #     branch: "main"
+  #     path: "public"
+  #     poll_seconds: 0
+  #     webhook_secret: "unique-secret-for-this-repo-only"
