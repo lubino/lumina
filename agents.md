@@ -286,6 +286,44 @@ Response header `X-Lumina-Domain` set to the canonical domain key when a domain 
 - Route modules: support `default` export as `(req, params?) => Response`, Hono app, or `{ fetch }`.  
 - Hot reload: debounce watchers; rebuild route tables on content/config change.  
 - Git failures should log and not necessarily crash unrelated domains (fail soft per domain where possible).  
+- Follow **Maintainer push protocol** below whenever the user asks to push.
+
+---
+
+## Maintainer push protocol
+
+When the user says **push** (or equivalent: “commit and push”, “push it”), the agent **must** do all of the following in order — no separate confirmation beyond that word:
+
+1. **Review changes** — `git status`, diffs, recent commits; do not commit secrets (`.env`, real tokens in config samples).
+2. **Bump the build/patch version** — always increment the **last** number of the project version (SemVer **PATCH**):
+   - Canonical source: `package.json` → `"version": "MAJOR.MINOR.PATCH"`
+   - Example: `0.1.0` → `0.1.1` → `0.1.2`
+   - Do **not** bump MINOR/MAJOR on a normal push unless the user explicitly asks for a feature/breaking release.
+   - If other files embed the same version string for packaging, keep them in sync (today: primarily `package.json`).
+3. **Stage** all intended project files (`git add` relevant paths; respect `.gitignore`).
+4. **Commit** with a message in English that states **what** changed and **why** (complete sentences; no fluff). Include the new version in the subject or body when useful (e.g. `Release 0.1.2: …` or footer `Version: 0.1.2`).
+5. **Push** to `origin` on the current branch (typically `main`): `git push` / `git push -u origin HEAD` as needed.
+6. If there is **nothing to commit** except the version bump is still required only when there are real changes — if the tree is clean and the user only wanted a no-op push, push existing commits without a fake empty commit. If there **are** changes, the version bump is mandatory on that same push.
+
+Do **not** force-push, amend published history, or skip hooks unless the user explicitly orders that.
+
+---
+
+## License (project policy)
+
+**Chosen license: [GNU Affero General Public License v3.0](https://www.gnu.org/licenses/agpl-3.0.html) (`AGPL-3.0-only`).**
+
+| Goal | How AGPL-3.0 fits |
+|------|-------------------|
+| Fully open source | Anyone may use, study, share, and modify the software. |
+| Changes must stay public | Copyleft: distributed modifications must be under AGPL-3.0 with source. |
+| Network / SaaS loophole closed | If you run a **modified** Lumina as a service over the network, you must offer the corresponding source to users of that service (AGPL §13) — stronger than GPL for servers. |
+
+**Not sufficient for the “changes must be public” goal:** MIT, BSD, Apache-2.0 (allow closed forks).  
+**Weaker for server software:** GPL-3.0 alone (modify + offer only as a network service without distributing binaries may avoid sharing source).  
+
+License text: [`LICENSE`](./LICENSE). `package.json` field: `"license": "AGPL-3.0-only"`.  
+Copyright holder for NOTICE purposes: project author(s) as recorded in git history / GitHub `lubino/lumina`.
 
 ---
 

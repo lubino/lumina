@@ -686,4 +686,9 @@ Architecture, hard project rules, source layout, tests, and contribution constra
 
 ## License
 
-TBD.
+Lumina is licensed under the **[GNU Affero General Public License v3.0](./LICENSE)** (`AGPL-3.0-only`).
+
+- You may use, share, and modify the software freely.
+- If you distribute modified versions, or run a **modified** Lumina as a network service, you must make the corresponding source available under AGPL-3.0 (see the license text).
+
+This is intentional: the project should stay open, and improvements should remain available to the community — including when Lumina is offered as a hosted service.
