@@ -25,7 +25,7 @@ Lumina is meant to be used as a **ready Docker image**: you mount configuration 
 docker pull ghcr.io/lubino/lumina:latest
 ```
 
-> **Note:** GHCR packages are often **private** until you set the package visibility to public under GitHub → Packages → `lumina` → Package settings. Until the first successful CI publish, the package page may not exist yet.
+> **Note:** If `docker pull` fails with auth errors, set the GHCR package **public** (GitHub → Packages → `lumina` → Package settings) or log in with a token that has `read:packages`.
 
 ### Why Lumina
 
@@ -94,36 +94,64 @@ domains:
 ```yaml
 services:
   lumina:
-    image: lumina:latest       # use your registry tag / digest in production
+    image: ghcr.io/lubino/lumina:latest
     ports:
-      - "3030:3030"            # host:container — container listens on LUMINA_PORT
+      - "3030:3030"            # host:container (default LUMINA_PORT is 3030)
     environment:
       LUMINA_PORT: "3030"      # optional; default is already 3030
       LUMINA_CONFIG: /config/config.yaml
       LUMINA_DOMAINS_DIR: /data/domains
       LUMINA_GIT_CACHE_DIR: /data/git-cache
     volumes:
-      # Point these at your own folders (names/paths are up to you)
-      - /path/to/your-lumina-data/config:/config:ro
-      - /path/to/your-lumina-data/sites:/data/domains:ro
-      - lumina-git-cache:/data/git-cache
+      # Config must be a *file* bind (file→file). Create the host file before first deploy
+      # or Docker may create a directory and Lumina will fail with EISDIR.
+      - /path/to/your-config.yaml:/config/config.yaml:ro
+      - /path/to/your-sites:/data/domains:ro
+      # git-cache must be writable by the container user (not :ro)
+      - /path/to/your-git-cache:/data/git-cache
     restart: unless-stopped
-
-volumes:
-  lumina-git-cache:
 ```
+
+Config and sites **need not** share a parent folder — any two host paths work.
 
 ```bash
 docker compose up -d
 # open http://localhost:3030/ with Host: example.com
-# or point DNS / reverse proxy at the service
+# or point DNS / reverse proxy / Cloudflare Tunnel at the service
 ```
 
-**Nothing is compiled or installed when the stack starts.** The image is already built. You only mount configuration and content.
+**Nothing is compiled or installed when the stack starts.** The image is already built (multi-arch `amd64` + `arm64`). You only mount configuration and content.
 
-> Until a published image is available on a registry, build once on a build machine:  
-> `docker build -t lumina:latest .`  
-> then use that tag in the stack (still no build on the *runtime* host if you ship the image).
+### Portainer stack example
+
+Use **absolute host paths**. Example layout on a Pi:
+
+```text
+/home/rpi/docker/lumina/
+├── config.yml
+├── domains/
+└── git-cache/     # chown to container user if you see EACCES on clone
+```
+
+```yaml
+services:
+  lumina:
+    image: ghcr.io/lubino/lumina:latest
+    container_name: lumina
+    ports:
+      - "3030:3030"
+    environment:
+      LUMINA_CONFIG: /config/config.yml
+      LUMINA_DOMAINS_DIR: /data/domains
+      LUMINA_GIT_CACHE_DIR: /data/git-cache
+    volumes:
+      - /home/rpi/docker/lumina/config.yml:/config/config.yml:ro
+      - /home/rpi/docker/lumina/domains:/data/domains:ro
+      - /home/rpi/docker/lumina/git-cache:/data/git-cache
+    restart: unless-stopped
+```
+
+After a new image publish: **pull + recreate** the stack (restart alone keeps the old image).
 
 ---
 
@@ -609,9 +637,13 @@ You can terminate TLS for **many** names on nginx/HAProxy/Caddy and send everyth
 
 | Symptom | Check |
 |---------|--------|
-| Always 404 “Unknown host” | `Host` header / DNS name must match a domain or alias in config |
-| Files missing after edit | Confirm the volume mount path; for git sites, confirm pull succeeded |
-| Git domain empty | Network access to the remote; branch name; writable git-cache volume |
+| Always 404 “Unknown host” (HTML) | `Host` / public DNS name must match a domain or **alias** (IP-only access needs an alias) |
+| 404 `Not Found` but `X-Lumina-Domain` is set | Domain matched; missing `index.html` at content root, or set `git.path` if the site lives in a subfolder |
+| `EISDIR` / mount file vs directory | Host `config.yml` must be a **file** created before deploy; mount file→file |
+| `EACCES mkdir …/git-cache/…` | Make git-cache **writable** by the container user (`chown` to UID from `docker run --rm --entrypoint id ghcr.io/lubino/lumina:latest`) |
+| `no matching manifest … arm64` | Use current multi-arch `latest`; **pull** again (Portainer: pull + redeploy, not restart) |
+| Git domain empty | Network + token in `git.url` for private repos; branch name; check clone logs |
+| Webhook 401 | `git.webhook_secret` must match the forge secret for **that** domain |
 | Want a clean boot without watchers | `LUMINA_WATCH=0` |
 
 ---

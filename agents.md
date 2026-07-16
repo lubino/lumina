@@ -128,23 +128,30 @@ User-facing behavior and deploy examples: [`README.md`](./README.md).
 ```text
 src/
   main.ts                 # CLI entry
-  app.ts                  # request pipeline (domain → dynamic → static)
+  app.ts                  # request pipeline (/_lumina → domain → dynamic → static)
+  constants.ts            # DEFAULT_PORT 3030, DEFAULT_HOST 0.0.0.0
   config/
-    schema.ts             # Zod
+    schema.ts             # Zod (no server: key)
     load.ts               # load + path resolution + Host normalize
     watch.ts              # config hot-reload
     types.ts              # ResolvedConfig, ResolvedDomain
   server/
-    lifecycle.ts          # start/stop, watchers, git sync hook
+    lifecycle.ts          # start/stop, watchers, git poll + webhook coalescer
   routing/
     domain-resolver.ts
+    request-host.ts       # X-Forwarded-Host / Forwarded / Host (proxies)
     static.ts
     dynamic.ts
+    unknown-host.ts       # HTML 404 for unknown Host
   security/
     deny-paths.ts
     path-safe.ts
   git/
-    manager.ts
+    manager.ts            # clone/pull
+    poll.ts               # poll_seconds intervals
+    webhook.ts            # POST /_lumina/hooks/git
+    coalesce.ts           # 5-minute webhook coalesce rules
+    url-match.ts          # normalize forge URLs
   watch/
     fs-watcher.ts
   logging/
@@ -152,20 +159,24 @@ src/
 tests/
   unit/
   integration/
-examples/                 # local fixtures only (not production data)
+examples/                 # local fixtures only
 config/config.example.yaml
+ENDPOINTS.md              # canonical guide for site routes (AI + humans)
 Dockerfile
+.github/workflows/ci.yml  # test + multi-arch GHCR publish
+startDevServer.sh         # local dev on port 3030
 ```
 
 ### Module responsibilities
 
 | Area | Rules |
 |------|--------|
-| Domain resolve | `Host` → lowercase, strip port → `hostIndex` → `ResolvedDomain` |
+| Domain resolve | Proxy-aware host → `hostIndex` → `ResolvedDomain` |
 | Dynamic routes | Prefer over static; map `routes/` files to URL patterns; cache-bust imports on reload |
-| Static | Safe join + deny; directory → `index.html`; never serve denied basenames/segments |
+| Static | Safe join + deny on path **relative to domain root only**; directory → `index.html` |
 | Config reload | Re-parse YAML, re-resolve roots, re-sync git if enabled, rebuild route tables |
 | Git | Cache under `gitCacheDir/<sanitized-domain>/`; optional `git.path` subdir becomes serve root |
+| Webhook | Global path; per-domain `webhook_secret`; 5-min coalesce (see `coalesce.ts` + comment on `webhook.ts`) |
 
 ---
 
@@ -208,7 +219,7 @@ Duplicate hostname → hard error at load.
 Full patterns live in `src/security/deny-paths.ts` and must stay covered by tests.
 
 **Always blocked directory segments (examples):**  
-`.git`, `node_modules`, `.bun`, `vendor`, `.venv`, `git-cache`, `.ssh`, `.github`, `.cursor`, `.grok`, …
+`.git`, `node_modules`, `.bun`, `vendor`, `.venv`, `git-cache` (**URL / relative-to-root only** — parent dirs of a domain root must not deny the whole site), `.ssh`, `.github`, `.cursor`, `.grok`, …
 
 **Always blocked basenames (examples):**  
 `agents.md`, `.env`, `package.json`, lockfiles, `tsconfig.json`, `config.yaml`, `Dockerfile*`, keys, logs, …
@@ -269,13 +280,15 @@ Runtime hosts should **pull** a built image, not depend on compiling Lumina.
 
 ```text
 Request
-  → resolve domain by Host (or single-domain fallback)
+  → if path is /_lumina/hooks/git → git webhook (global, not Host-routed)
+  → resolve domain by public Host (X-Forwarded-Host → Forwarded → Host → URL)
+  → if unknown host → HTML 404 diagnostics (no list of configured hosts)
   → dynamic route table match → handler
   → else static file (deny + jail)
-  → else 404 JSON/text
+  → else 404 JSON
 ```
 
-Response header `X-Lumina-Domain` set to the canonical domain key when a domain was resolved.
+Response headers when domain matched: `X-Lumina-Domain`, `X-Lumina-Host`.
 
 ---
 
@@ -332,12 +345,37 @@ Copyright holder for NOTICE purposes: project author(s) as recorded in git histo
 
 ## Feature backlog (post-core)
 
-1. Git private repos: recommend token embedded in `git.url` (documented in README); optional SSH later; poll + webhook already supported  
-2. Rate limiting / request size limits  
-3. Metrics / structured access logs  
-4. CI: test + multi-arch image publish  
+1. Mask secrets in logs (`git.url` tokens must never appear in log lines)  
+2. Optional SSH deploy-key auth without embedding tokens in URLs  
+3. Rate limiting / request size limits on HTTP and webhooks  
+4. Metrics / structured access logs  
 5. Optional Bun `FileSystemRouter` alignment if it simplifies matching further  
-6. Document reverse-proxy TLS recipes in README as needed  
+6. Codecov not desired — coverage stays CI artifact / local `bun run test:coverage` only  
+
+---
+
+## Critical bugs fixed (do not reintroduce)
+
+| Issue | Cause | Fix |
+|-------|--------|-----|
+| Git-backed sites always 404 (`Not Found`) despite `index.html` | `resolveStaticFile` ran deny checks on **absolute** path; segment `git-cache` blocked all files under `LUMINA_GIT_CACHE_DIR` | Deny only path **relative to domain root** (`src/routing/static.ts`) |
+| RPi Portainer: no matching manifest arm64 | GHCR image was amd64-only | CI multi-arch `linux/amd64,linux/arm64` + QEMU |
+| `EISDIR` on startup | `LUMINA_CONFIG` pointed at a **directory** (Docker created a dir when host file missing) | Operator: real YAML **file** bind-mounted file→file |
+| `EACCES mkdir git-cache/...` | Container user `lumina` cannot write host bind mount | Operator: `chown` git-cache to container UID or writable perms; mount **rw** |
+| Mount file vs directory error | Host path type ≠ container path type | File↔file, dir↔dir; create host files **before** first deploy |
+
+---
+
+## Ops lessons (Portainer / RPi / production)
+
+- **Image:** `ghcr.io/lubino/lumina:latest` (multi-arch). Repo: `git@github.com:lubino/lumina.git`.  
+- **Ports:** prefer `3030:3030` when using default `LUMINA_PORT`.  
+- **Portainer:** use **absolute** host paths for binds; relative `./` is unreliable. Refresh = pull image + recreate (not mere restart).  
+- **Config file name:** can be `config.yml` or `config.yaml` — must match `LUMINA_CONFIG` and the bind target.  
+- **Host routing:** browser `Host` (or Cloudflare public name) must be a domain key or alias; IP-only access needs an alias.  
+- **Git private repos:** recommend token in `git.url` (README); **never commit real tokens**; rotate if leaked to chat/logs.  
+- **Webhook:** `POST /_lumina/hooks/git`; auth = per-domain `git.webhook_secret` in YAML (not env). Verified working via Cloudflare with plain `X-Lumina-Webhook-Secret` and forge-style headers.  
+- **Unknown-host HTML:** show requested host + suggested YAML; **never** list all configured hostnames; put resolved config path next to `LUMINA_CONFIG` in “How to fix”, not in footer.  
 
 ---
 
@@ -345,11 +383,25 @@ Copyright holder for NOTICE purposes: project author(s) as recorded in git histo
 
 | File | Audience |
 |------|----------|
-| [`README.md`](./README.md) | Operators / users of the ready server |
-| [`ENDPOINTS.md`](./ENDPOINTS.md) | **Creating site endpoints** (JS/TS under `routes/`) — follow this when implementing APIs for a Lumina-hosted site |
-| [`agents.md`](./agents.md) | Developers & coding agents changing Lumina core (this file) |
+| [`README.md`](./README.md) | Operators / users of the ready server (deploy, config, webhooks, proxies) |
+| [`ENDPOINTS.md`](./ENDPOINTS.md) | **Creating site endpoints** (JS/TS under `routes/`) — AI + humans |
+| [`agents.md`](./agents.md) | Developers & coding agents (this file) — architecture, hard rules, session continuity |
+
+**README must stay operator-complete:** Docker/Portainer stack, env vars, no `server:` in YAML, ports 3030, multi-domain, static+endpoints link to ENDPOINTS.md, git poll/webhook + forge setup, private repo token-in-URL, reverse proxies (nginx/HAProxy/Caddy/Traefik/cloudflared), security deny list summary, project status badges (CI, license, GHCR; no Codecov), AGPL license blurb.
 
 ---
 
-**Status:** Core server implemented under `src/` with unit + integration tests and example sites.  
-**Priority:** Keep operator README simple; keep hard constraints and architecture here; extend features without breaking Docker zero-build or deny-path guarantees.
+## Session continuity (handoff)
+
+Last focused production work: git-backed domain `cc10.cz` behind Cloudflare; clone OK; 404 fixed by git-cache deny bug (v0.1.4). Webhook with domain secret returns `action: started` for `cc10.cz`.  
+
+**Current version at handoff:** see `package.json` (expect ≥ `0.1.4`).  
+**Remote:** `origin` → `git@github.com:lubino/lumina.git`, branch `main`.  
+**Image:** `ghcr.io/lubino/lumina` multi-arch via `.github/workflows/ci.yml`.  
+
+When resuming: read this file + README + ENDPOINTS.md; do not re-open closed product decisions (AGPL, env-only listen, per-domain webhook secrets, push = patch bump + commit + push).
+
+---
+
+**Status:** Core server shipped; CI publishes multi-arch images; operator and endpoint docs in place.  
+**Priority:** Keep operator README accurate; never reintroduce git-cache absolute-path deny; mask secrets in logs next.
