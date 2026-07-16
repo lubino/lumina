@@ -1,17 +1,16 @@
 # Multi-stage: ALL install/compile happens here — never on stack hosts.
-FROM oven/bun:1 AS build
+# Runtime is Alpine: much smaller than Debian slim (git ~10MB vs ~120MB with Perl deps).
+FROM oven/bun:1-alpine AS build
 WORKDIR /src
 COPY package.json bun.lock* ./
 RUN bun install --frozen-lockfile
 COPY src ./src
 RUN bun build ./src/main.ts --outdir=/out --target=bun --minify
 
-FROM oven/bun:1-slim
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends git ca-certificates \
-  && rm -rf /var/lib/apt/lists/* \
-  && groupadd -r lumina \
-  && useradd -r -g lumina -d /app -s /usr/sbin/nologin lumina
+FROM oven/bun:1-alpine
+RUN apk add --no-cache git ca-certificates \
+  && addgroup -S lumina \
+  && adduser -S -G lumina -h /app -s /sbin/nologin lumina
 WORKDIR /app
 COPY --from=build /out /app
 RUN mkdir -p /config /data/domains /data/git-cache /data/secrets \
