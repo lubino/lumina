@@ -16,7 +16,7 @@ Lumina is meant to be used as a **ready Docker image**: you mount configuration 
 |------|--------|
 | **CI / tests** | [GitHub Actions — CI](https://github.com/lubino/lumina/actions/workflows/ci.yml) (badge above; runs on every push/PR to `main`) |
 | **Coverage** | Generated in CI via `bun test --coverage`; download the **coverage-report** artifact from a workflow run. Locally: `bun run test:coverage` |
-| **Container image** | [`ghcr.io/lubino/lumina`](https://github.com/lubino/lumina/pkgs/container/lumina) — tags `latest` (main), `sha-…`, and semver when you push tags `v*` |
+| **Container image** | [`ghcr.io/lubino/lumina`](https://github.com/lubino/lumina/pkgs/container/lumina) — tags `latest` (main), `sha-…`, and semver when you push tags `v*`. **Multi-arch:** `linux/amd64` + `linux/arm64` (Raspberry Pi, etc.) |
 | **Source / issues** | [github.com/lubino/lumina](https://github.com/lubino/lumina) |
 | **License** | [AGPL-3.0-only](./LICENSE) |
 
