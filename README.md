@@ -1,8 +1,31 @@
 # Lumina
 
+[![CI](https://github.com/lubino/lumina/actions/workflows/ci.yml/badge.svg)](https://github.com/lubino/lumina/actions/workflows/ci.yml)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](./LICENSE)
+[![GitHub release](https://img.shields.io/github/v/release/lubino/lumina?include_prereleases&sort=semver)](https://github.com/lubino/lumina/releases)
+[![GHCR](https://img.shields.io/badge/GHCR-ghcr.io%2Flubino%2Flumina-blue?logo=docker&logoColor=white)](https://github.com/lubino/lumina/pkgs/container/lumina)
+[![Version](https://img.shields.io/github/package-json/v/lubino/lumina)](./package.json)
+
 **A multi-domain web server that serves static content and JavaScript/TypeScript endpoints — with changes applied immediately, without restarting the server.**
 
 Lumina is meant to be used as a **ready Docker image**: you mount configuration and site folders, start the stack, and host many websites from one process. You do not rebuild or reinstall the server when you edit a page or an API route.
+
+## Project status
+
+| Item | Where |
+|------|--------|
+| **CI / tests** | [GitHub Actions — CI](https://github.com/lubino/lumina/actions/workflows/ci.yml) (badge above; runs on every push/PR to `main`) |
+| **Coverage** | Generated in CI via `bun test --coverage`; download the **coverage-report** artifact from a workflow run. Locally: `bun run test:coverage` |
+| **Container image** | [`ghcr.io/lubino/lumina`](https://github.com/lubino/lumina/pkgs/container/lumina) — tags `latest` (main), `sha-…`, and semver when you push tags `v*` |
+| **Source / issues** | [github.com/lubino/lumina](https://github.com/lubino/lumina) |
+| **License** | [AGPL-3.0-only](./LICENSE) |
+
+```bash
+# Pull the published image (package must be public, or docker login ghcr.io)
+docker pull ghcr.io/lubino/lumina:latest
+```
+
+> **Note:** GHCR packages are often **private** until you set the package visibility to public under GitHub → Packages → `lumina` → Package settings. Until the first successful CI publish, the package page may not exist yet.
 
 ### Why Lumina
 
@@ -17,6 +40,7 @@ Lumina is meant to be used as a **ready Docker image**: you mount configuration 
 In short: it feels like classic static + script hosting (think “files on disk become the site”), but with modern **TypeScript/JavaScript** handlers and **zero-restart** reloads for both assets and endpoints.
 
 If you want to **host websites**, this file is for you.  
+If you want to **create or program HTTP endpoints** (JS/TS under `routes/`), see **[`ENDPOINTS.md`](./ENDPOINTS.md)** — full path mapping, handler API, and templates (for humans and AI agents).  
 If you want to **change the server itself**, see [`agents.md`](./agents.md).
 
 ---
@@ -29,7 +53,7 @@ If you want to **change the server itself**, see [`agents.md`](./agents.md).
 - **Aliases** — several hostnames can share the same folder  
 - **Optional Git sites** — a domain can be a git clone that Lumina keeps updated  
 - **Safe defaults** — secrets, `.git`, `node_modules`, `package.json`, agent docs, and similar paths are **not** exposed over HTTP  
-- **cloudflared-friendly** — works behind tunnels/proxies that pass the public hostname  
+- **Reverse-proxy friendly** — nginx, HAProxy, Caddy, Traefik, cloudflared, and similar; uses forwarded host headers for virtual hosting  
 
 You do **not** need Node/Bun on the server for normal use. Pull the image, mount config + sites, start the stack.
 
@@ -130,192 +154,26 @@ In config, `root: example.com` means `/data/domains/example.com`. You can also u
 
 ### Dynamic routes (endpoints)
 
-You create endpoints by adding **files** under the domain’s `routes/` folder (name configurable per domain via `routesDir`, default `routes`). Lumina maps the file path to a URL, loads the module, and runs it for matching requests. Dynamic routes are tried **before** static files.
+You create endpoints by adding **files** under the domain’s `routes/` folder. Lumina maps the file path to a URL, runs your handler, and hot-reloads on change (no process restart).
 
-When file watching is enabled (default), create / edit / delete under `routes/` is picked up without restarting the process.
-
-#### 1. Where to put files
-
-```text
-sites/example.com/
-├── index.html                 ← static page for /
-├── assets/…
-└── routes/                    ← endpoints live here
-    ├── health.ts              → GET /health
-    ├── api.ts                 → /api
-    ├── echo.ts                → /echo
-    ├── methods.ts             → /methods
-    ├── hello/
-    │   └── [name].ts          → /hello/:name
-    ├── users/
-    │   └── [id]/
-    │       └── profile.ts     → /users/:id/profile
-    ├── docs/
-    │   └── [...slug].ts       → /docs/* (catch-all)
-    └── time/
-        └── index.ts           → /time
-```
-
-Supported extensions: `.ts`, `.js`, `.tsx`, `.jsx`, `.mts`, `.mjs`.
-
-#### 2. How the file path becomes a URL
-
-| File under `routes/` | URL pattern | Example request |
-|----------------------|-------------|-----------------|
-| `health.ts` | `/health` | `/health` |
-| `api.ts` | `/api` | `/api` |
-| `time/index.ts` | `/time` | `/time` |
-| `index.ts` | `/` | `/` (takes precedence over static `index.html` if both exist) |
-| `hello/[name].ts` | `/hello/:name` | `/hello/world` → `params.name = "world"` |
-| `users/[id]/profile.ts` | `/users/:id/profile` | `/users/42/profile` → `params.id = "42"` |
-| `docs/[...slug].ts` | `/docs/*` | `/docs/a/b` → `params.slug = "a/b"` |
-| `blog/[[...slug]].ts` | optional catch-all | same style; remaining path may be empty |
-
-Rules:
-
-- Folders = path segments.
-- `index.ts` (or `.js`) inside a folder maps to that folder’s path, not `/index`.
-- `[param]` = one dynamic segment (value is URL-decoded).
-- `[...param]` = catch-all: remaining segments joined with `/`.
-- Static segments must match exactly (case-sensitive).
-- More specific routes win when several could match (static beats dynamic; longer paths score higher).
-
-#### 3. What the file must export
-
-Export a **default** function (recommended). Also accepted: named `app`, `handler`, or `fetch`, or a Hono app / object with `.fetch`.
+| File under `routes/` | URL |
+|----------------------|-----|
+| `health.ts` | `/health` |
+| `hello/[name].ts` | `/hello/world` |
+| `users/[id]/profile.ts` | `/users/42/profile` |
 
 ```ts
-// Signature
-export default function handler(
-  request: Request,
-  params: Record<string, string>,
-): Response | Promise<Response>;
-```
-
-| Argument | Meaning |
-|----------|---------|
-| `request` | Standard [Fetch API `Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request) — method, headers, URL, body |
-| `params` | Values from `[name]` / `[...slug]` segments (empty object if none) |
-
-Return a `Response` (or `Response.json(...)`, `new Response(text)`, etc.).
-
-#### 4. Examples
-
-**Minimal JSON endpoint** — `routes/health.ts` → `/health`
-
-```ts
+// routes/health.ts
 export default function handler(_request: Request) {
   return Response.json({ status: "ok" });
 }
 ```
 
-**Dynamic segment** — `routes/hello/[name].ts` → `/hello/alice`
+**Full specification for humans and AI agents** (exact paths, params, methods, body, templates, checklist):
 
-```ts
-export default function handler(
-  _request: Request,
-  params: Record<string, string>,
-) {
-  return Response.json({ hello: params.name ?? "anonymous" });
-}
-```
+### → **[`ENDPOINTS.md`](./ENDPOINTS.md)**
 
-**Nested dynamic path** — `routes/users/[id]/profile.ts` → `/users/7/profile`
-
-```ts
-export default function handler(
-  _request: Request,
-  params: Record<string, string>,
-) {
-  return Response.json({ userId: params.id, profile: true });
-}
-```
-
-**Catch-all** — `routes/docs/[...slug].ts` → `/docs/guide/install`
-
-```ts
-export default function handler(
-  _request: Request,
-  params: Record<string, string>,
-) {
-  return Response.json({
-    slug: params.slug,           // "guide/install"
-    parts: params.slug.split("/"),
-  });
-}
-```
-
-**Read method, query, JSON body** — `routes/echo.ts` → `/echo?x=1`
-
-```ts
-export default async function handler(request: Request) {
-  const url = new URL(request.url);
-  const query = Object.fromEntries(url.searchParams.entries());
-  let body = null;
-  if (request.method !== "GET" && request.method !== "HEAD") {
-    const ct = request.headers.get("content-type") ?? "";
-    if (ct.includes("application/json")) {
-      body = await request.json().catch(() => null);
-    }
-  }
-  return Response.json({ method: request.method, query, body });
-}
-```
-
-**Different HTTP methods in one file** — `routes/methods.ts` → `/methods`
-
-```ts
-export default async function handler(request: Request) {
-  switch (request.method) {
-    case "GET":
-      return Response.json({ method: "GET", message: "read" });
-    case "POST": {
-      const body = await request.json().catch(() => ({}));
-      return Response.json({ method: "POST", received: body }, { status: 201 });
-    }
-    case "DELETE":
-      return new Response(null, { status: 204 });
-    default:
-      return Response.json(
-        { error: "Method not allowed" },
-        { status: 405, headers: { Allow: "GET, POST, DELETE" } },
-      );
-  }
-}
-```
-
-**Plain text** — `routes/time/index.ts` → `/time`
-
-```ts
-export default function handler(_request: Request) {
-  return new Response(new Date().toISOString(), {
-    headers: { "Content-Type": "text/plain; charset=utf-8" },
-  });
-}
-```
-
-Working copies of these examples ship under `examples/domains/example.com/routes/` (used by `bun run dev` and the test suite).
-
-#### 5. Behaviour notes
-
-| Topic | Behaviour |
-|-------|-----------|
-| Static vs dynamic | Matching route file wins over a static file at the same path |
-| Source download | `GET /routes/api.ts` is **not** allowed — route files are executed only |
-| Errors in handler | Logged; client typically gets `500` |
-| Invalid module / no export | Route is skipped (warning in logs) |
-| Hot reload | Edit the file; next request uses the new code (watch mode) |
-
-#### 6. Quick check after deploy
-
-```bash
-curl -s -H "Host: example.com" http://127.0.0.1:3030/health
-curl -s -H "Host: example.com" http://127.0.0.1:3030/hello/lumina
-curl -s -H "Host: example.com" http://127.0.0.1:3030/users/42/profile
-curl -s -H "Host: example.com" http://127.0.0.1:3030/docs/a/b
-curl -s -H "Host: example.com" -X POST -H "Content-Type: application/json" \
-  -d '{"x":1}' http://127.0.0.1:3030/methods
-```
+Examples also live under `examples/domains/example.com/routes/`.
 
 ### Git-backed domain
 
@@ -640,15 +498,110 @@ Do not rely on “security by obscurity”: keep secrets out of public site tree
 
 ---
 
-## Reverse proxy & Cloudflare Tunnel
+## Reverse proxies & tunnels
 
-Run Lumina behind Caddy, Traefik, nginx, or **cloudflared**:
+Lumina is built to sit **behind** a reverse proxy or tunnel. Virtual hosting uses the **public hostname** from the browser (or tunnel), not the internal Docker/service name.
 
-- Virtual hosting uses the **public hostname**, not the internal container name.
-- Lumina resolves the host in this order: `X-Forwarded-Host` → `Forwarded` (`host=`) → `X-Original-Host` → `Host` → URL hostname.
-- cloudflared / proxies should pass the browser hostname (usually automatic). Register that same name as a domain or alias in YAML.
-- If the host is unknown, Lumina returns an **HTML 404** with what went wrong and a **suggested config snippet** for that request — useful when wiring a new tunnel hostname.
-- Proxy to `lumina:3030` (or whatever `LUMINA_PORT` is). One Lumina instance can serve all vhosts.
+### How Lumina picks the hostname
+
+In order (first non-empty wins):
+
+1. `X-Forwarded-Host` (first value if comma-separated)  
+2. `Forwarded` header — `host=` (RFC 7239)  
+3. `X-Original-Host`  
+4. `Host`  
+5. Hostname from the request URL  
+
+Register every public name as a **domain key or alias** in YAML. One Lumina process can serve all vhosts; proxy to `lumina:3030` (or your `LUMINA_PORT`).
+
+If the host is unknown, Lumina returns an **HTML 404** with diagnostics and a suggested config snippet.
+
+### Works with (among others)
+
+| Front-end | Typical use |
+|-----------|-------------|
+| **nginx** | TLS termination, HTTP/2, static edge |
+| **HAProxy** | L7 load balancing, multi-backend |
+| **Caddy** | automatic HTTPS |
+| **Traefik** | Docker / Swarm / K8s ingress |
+| **cloudflared** | Cloudflare Tunnel |
+| **Apache httpd**, **Envoy**, etc. | any proxy that forwards the original host |
+
+All of these work the same way from Lumina’s perspective: forward the original host (and preferably proto) to the backend.
+
+### What the proxy must send
+
+| Header | Purpose |
+|--------|---------|
+| **Original host** | So Lumina can match `domains:` / `aliases:` — via preserved `Host`, and/or `X-Forwarded-Host`, and/or RFC `Forwarded` |
+| **Optional** `X-Forwarded-Proto` | `https` when TLS ends at the proxy (useful for apps/links; host routing does not require it) |
+
+Do **not** replace the public hostname with the internal upstream name only (e.g. only `Host: lumina:3030`) unless you also send `X-Forwarded-Host: public.example.com`.
+
+### Example snippets (illustrative)
+
+**nginx**
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name example.com www.example.com docs.example.com;
+
+    # ssl_certificate ...;
+
+    location / {
+        proxy_pass http://127.0.0.1:3030;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}
+```
+
+**HAProxy**
+
+```haproxy
+frontend https_in
+    bind :443 ssl crt /etc/ssl/certs/site.pem
+    mode http
+    default_backend lumina
+
+backend lumina
+    mode http
+    server lumina1 127.0.0.1:3030 check
+    # Preserve client host for Lumina virtual hosting
+    http-request set-header X-Forwarded-Host %[req.hdr(Host)]
+    http-request set-header X-Forwarded-Proto https if { ssl_fc }
+```
+
+**Caddy**
+
+```caddy
+example.com, www.example.com {
+    reverse_proxy 127.0.0.1:3030
+}
+```
+
+(Caddy forwards `Host` by default; that is enough. You may also set explicit forwarded headers if you use a more complex chain.)
+
+**Traefik** (Docker labels sketch)
+
+```yaml
+labels:
+  - traefik.enable=true
+  - traefik.http.routers.lumina.rule=Host(`example.com`) || Host(`www.example.com`)
+  - traefik.http.services.lumina.loadbalancer.server.port=3030
+```
+
+**cloudflared** (Tunnel)
+
+Point the tunnel public hostname at the Lumina service (`http://lumina:3030` or `http://127.0.0.1:3030`). Cloudflare/cloudflared typically supplies the public hostname via forwarded headers; still list that hostname under `domains:` / `aliases:` in YAML.
+
+### Multi-domain tip
+
+You can terminate TLS for **many** names on nginx/HAProxy/Caddy and send everything to a **single** Lumina upstream. Lumina then selects the site from the forwarded host. No need for one container per domain.
 
 ---
 

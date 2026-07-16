@@ -1,6 +1,5 @@
 import type { ResolvedConfig } from "../config/types";
 import type { RequestHostInfo } from "./request-host";
-import { listHosts } from "./domain-resolver";
 
 export interface UnknownHostPageInput {
   config: ResolvedConfig;
@@ -10,13 +9,13 @@ export interface UnknownHostPageInput {
 
 /**
  * HTML 404 for unmatched Host — operator-facing diagnostics + suggested YAML.
+ * Does not list configured hostnames (information disclosure risk).
  */
 export function renderUnknownHostPage(input: UnknownHostPageInput): Response {
   const { config, request, hostInfo } = input;
   const url = safeUrl(request.url);
   const pathname = url?.pathname ?? "/";
   const method = request.method;
-  const known = listHosts(config);
   const requested = hostInfo.host;
   const rawHost = hostInfo.raw;
 
@@ -24,8 +23,13 @@ export function renderUnknownHostPage(input: UnknownHostPageInput): Response {
   const yamlSnippet = buildSuggestedYaml(requested, suggestedRoot);
   const domainsDir = config.domainsDir;
 
-  const whatsWrong = buildWhatsWrong(requested, known, hostInfo);
-  const howTo = buildHowTo(requested, suggestedRoot, domainsDir);
+  const whatsWrong = buildWhatsWrong(requested, hostInfo);
+  const howTo = buildHowTo(
+    requested,
+    suggestedRoot,
+    domainsDir,
+    config.configPath,
+  );
 
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -127,7 +131,9 @@ export function renderUnknownHostPage(input: UnknownHostPageInput): Response {
       <strong>Lumina</strong> is a multi-domain web server. It picks a site from the
       request hostname (virtual host), not only from the URL path.
       The hostname on this request is not listed as a domain or alias in your config.
-      Lumina also supports <strong>cloudflared</strong> tunnels.
+      Lumina works behind reverse proxies and tunnels (<strong>nginx</strong>, <strong>HAProxy</strong>,
+      <strong>Caddy</strong>, <strong>Traefik</strong>, <strong>cloudflared</strong>, and similar)
+      that forward the public hostname.
     </p>
 
     <div class="card">
@@ -146,14 +152,6 @@ export function renderUnknownHostPage(input: UnknownHostPageInput): Response {
       <ul>
         ${whatsWrong.map((line) => `<li>${line}</li>`).join("\n        ")}
       </ul>
-      <p style="margin-bottom:0">
-        Currently configured hostnames (${known.length}):
-        ${
-          known.length
-            ? known.map((h) => `<code>${escapeHtml(h)}</code>`).join(" ")
-            : "<em>none — your <code>domains:</code> map is empty</em>"
-        }
-      </p>
     </div>
 
     <div class="card">
@@ -175,8 +173,7 @@ export function renderUnknownHostPage(input: UnknownHostPageInput): Response {
     </div>
 
     <footer>
-      Lumina · multi-domain server · host routing ·
-      config file: <code>${escapeHtml(config.configPath)}</code>
+      Lumina · multi-domain server · host routing
     </footer>
   </main>
 </body>
@@ -195,7 +192,6 @@ export function renderUnknownHostPage(input: UnknownHostPageInput): Response {
 
 function buildWhatsWrong(
   requested: string | null,
-  known: string[],
   hostInfo: RequestHostInfo,
 ): string[] {
   const lines: string[] = [];
@@ -208,13 +204,9 @@ function buildWhatsWrong(
       `Hostname <code>${escapeHtml(requested)}</code> is not registered as a <strong>domain key</strong> or <strong>alias</strong> in the active config.`,
     );
   }
-  if (known.length === 0) {
-    lines.push("The configuration has an empty <code>domains:</code> section.");
-  } else {
-    lines.push(
-      "Lumina only serves hosts that are explicitly listed — there is no automatic “default site” for unknown names (except a single-domain fallback when the Host header is completely missing).",
-    );
-  }
+  lines.push(
+    "Lumina only serves hosts that are explicitly listed in configuration — there is no automatic default site for unknown names (except a single-domain fallback when the Host header is completely missing).",
+  );
   if (hostInfo.source === "host" && hostInfo.candidates.some((c) => c.source === "x-forwarded-host")) {
     lines.push(
       "Note: both <code>Host</code> and <code>X-Forwarded-Host</code> were present; Lumina preferred the forwarded public hostname.",
@@ -237,10 +229,11 @@ function buildHowTo(
   requested: string | null,
   suggestedRoot: string,
   domainsDir: string,
+  configPath: string,
 ): string[] {
   const host = requested ?? "your.domain.example";
   return [
-    `Edit the YAML pointed to by <code>LUMINA_CONFIG</code> (or the path shown in the footer).`,
+    `Edit the YAML pointed to by <code>LUMINA_CONFIG</code> (<code>${escapeHtml(configPath)}</code>).`,
     `Add a <code>domains:</code> entry for <code>${escapeHtml(host)}</code> (or add it under <code>aliases:</code> of an existing domain if it should share content).`,
     `Create a content folder <code>${escapeHtml(domainsDir)}/${escapeHtml(suggestedRoot || "your-site")}</code> with static files and optional <code>routes/</code> endpoints.`,
     `Save the file — with watching enabled, Lumina reloads domains without restarting the container.`,

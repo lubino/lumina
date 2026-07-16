@@ -2,7 +2,8 @@
 
 This document is for **people and agents who develop Lumina itself**.
 
-End users who only want to **run** the server (Docker, config, sites) should read **[`README.md`](./README.md)** instead.
+End users who only want to **run** the server (Docker, config, sites) should read **[`README.md`](./README.md)** instead.  
+To **add or program HTTP endpoints** on a site served by Lumina (not core server code), follow **[`ENDPOINTS.md`](./ENDPOINTS.md)**.
 
 ---
 
@@ -17,6 +18,8 @@ A Bun-based multi-domain HTTP server:
 - Hot-reload of YAML config and site content  
 - Optional git-backed domain content  
 - Docker-first delivery: **ready image**, no build/install at stack start  
+- Reverse-proxy / tunnel friendly (nginx, HAProxy, Caddy, Traefik, cloudflared, …) via `X-Forwarded-Host` / `Forwarded` / `Host` — see README  
+
 
 Language of **everything on disk** in this repository (code, docs, comments, config samples, commits): **English**. Discussion with humans may be multilingual.
 
@@ -343,7 +346,8 @@ Copyright holder for NOTICE purposes: project author(s) as recorded in git histo
 | File | Audience |
 |------|----------|
 | [`README.md`](./README.md) | Operators / users of the ready server |
-| [`agents.md`](./agents.md) | Developers & coding agents (this file) |
+| [`ENDPOINTS.md`](./ENDPOINTS.md) | **Creating site endpoints** (JS/TS under `routes/`) — follow this when implementing APIs for a Lumina-hosted site |
+| [`agents.md`](./agents.md) | Developers & coding agents changing Lumina core (this file) |
 
 ---
 

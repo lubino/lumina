@@ -49,11 +49,15 @@ describe("unknown host HTML page", () => {
     const html = await res.text();
     expect(html).toContain("Lumina does not know this hostname");
     expect(html).toContain(unconfiguredHost);
-    // Page explains mismatch and lists known hosts from config
     expect(html).toContain("What is wrong");
-    expect(html).toContain("example.com");
-    expect(html).toContain("other.local");
-    // Pre-generated YAML for this request
+    // Must not disclose other configured hostnames
+    expect(html).not.toContain("Currently configured hostnames");
+    expect(html).not.toContain("other.local");
+    // How to fix: LUMINA_CONFIG with actual path; not only in footer
+    expect(html).toContain("LUMINA_CONFIG");
+    expect(html).toContain("examples/config.yaml");
+    expect(html).not.toContain("config file:");
+    // Pre-generated YAML for this request only
     expect(html).toContain("Suggested config for this request");
     expect(html).toContain(`${unconfiguredHost}:`);
     // Must not serve example.com site content
@@ -77,8 +81,10 @@ describe("unknown host HTML page", () => {
     expect(html).toContain("missing.example.test:");
     expect(html).toContain("root: missing.example.test");
     expect(html).toContain("cloudflared");
+    expect(html).toContain("nginx");
+    expect(html).toContain("HAProxy");
     expect(html).not.toContain("Cloudflare Tunnel (cloudflared)");
-    expect(html).toContain("example.com"); // known host listed
+    expect(html).not.toContain("Currently configured hostnames");
   });
 
   test("uses X-Forwarded-Host for matching (cloudflared style)", async () => {

@@ -1,6 +1,6 @@
-# Build and publish Lumina to GitHub Container Registry (ghcr.io).
+# CI: tests (+ coverage report) and publish Docker image to GHCR.
 # Image: ghcr.io/lubino/lumina:<tag>
-name: Docker publish
+name: CI
 
 on:
   push:
@@ -12,11 +12,11 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  # lower-case required by GHCR
   IMAGE_NAME: lubino/lumina
 
 jobs:
   test:
+    name: Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,12 +24,20 @@ jobs:
         with:
           bun-version: latest
       - run: bun install --frozen-lockfile
-      - run: bun test
+      - name: Run tests with coverage
+        run: bun test --coverage
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          if-no-files-found: ignore
 
   build-and-push:
+    name: Docker image
     needs: test
     runs-on: ubuntu-latest
-    # PRs only build (optional load); pushes publish
     permissions:
       contents: read
       packages: write

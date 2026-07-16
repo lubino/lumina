@@ -1,6 +1,6 @@
 {
   "name": "lumina",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Lightweight Universal Multi-domain Intelligent Networking Architecture — hot-reloadable multi-domain web server",
   "license": "AGPL-3.0-only",
   "type": "module",
@@ -8,11 +8,20 @@
   "bin": {
     "lumina": "./src/main.ts"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lubino/lumina.git"
+  },
+  "bugs": {
+    "url": "https://github.com/lubino/lumina/issues"
+  },
+  "homepage": "https://github.com/lubino/lumina#readme",
   "scripts": {
     "dev": "LUMINA_CONFIG=./examples/config.yaml LUMINA_DOMAINS_DIR=./examples/domains LUMINA_GIT_CACHE_DIR=./.data/git-cache LUMINA_LOG_LEVEL=debug bun run --watch src/main.ts",
     "dev:once": "LUMINA_CONFIG=./examples/config.yaml LUMINA_DOMAINS_DIR=./examples/domains LUMINA_GIT_CACHE_DIR=./.data/git-cache bun run src/main.ts",
     "start": "bun run src/main.ts",
     "test": "bun test",
+    "test:coverage": "bun test --coverage",
     "test:watch": "bun test --watch",
     "typecheck": "tsc --noEmit",
     "build": "bun build ./src/main.ts --outdir=./dist --target=bun --minify"

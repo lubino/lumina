@@ -11,7 +11,7 @@ export interface DomainResolveResult {
 }
 
 /**
- * Resolve the virtual host for a request (proxy / cloudflared aware).
+ * Resolve the virtual host for a request (reverse-proxy / tunnel aware).
  */
 export function resolveDomainFromRequest(
   config: ResolvedConfig,

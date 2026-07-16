@@ -23,9 +23,10 @@ export interface RequestHostInfo {
 /**
  * Resolve the public hostname for virtual hosting.
  *
- * Supports reverse proxies and Cloudflare Tunnel (cloudflared), which may pass
- * the browser hostname via X-Forwarded-Host / Forwarded while Host points at
- * the origin (container, localhost, or internal service name).
+ * Supports reverse proxies and tunnels (nginx, HAProxy, Caddy, Traefik,
+ * cloudflared, Envoy, Apache, etc.) that may pass the browser hostname via
+ * X-Forwarded-Host / Forwarded while Host points at the origin (container,
+ * localhost, or internal service name).
  *
  * Priority (first non-empty wins):
  * 1. X-Forwarded-Host (first value if comma-separated)
