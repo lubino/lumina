@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { resolveStaticFile } from "../../src/routing/static";
 
 const domainRoot = join(import.meta.dir, "../../examples/domains/example.com");
@@ -31,5 +33,32 @@ describe("resolveStaticFile", () => {
   test("finds css asset", () => {
     const r = resolveStaticFile(domainRoot, "/assets/style.css");
     expect(r.kind).toBe("file");
+  });
+
+  test("serves index from domain root under a git-cache parent path", () => {
+    // Git-backed domains live at …/git-cache/<domain>/; absolute paths contain
+    // the segment "git-cache", which must NOT block serving site files.
+    const root = join(
+      tmpdir(),
+      `lumina-git-cache-static-${Date.now()}`,
+      "git-cache",
+      "cc10.cz",
+    );
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, "index.html"), "<h1>from git</h1>\n");
+
+    try {
+      const r = resolveStaticFile(root, "/");
+      expect(r.kind).toBe("file");
+      if (r.kind === "file") {
+        expect(r.path.endsWith("index.html")).toBe(true);
+      }
+      // Still deny .git inside the working tree
+      mkdirSync(join(root, ".git"), { recursive: true });
+      writeFileSync(join(root, ".git", "config"), "secret");
+      expect(resolveStaticFile(root, "/.git/config").kind).toBe("denied");
+    } finally {
+      rmSync(join(root, "..", ".."), { recursive: true, force: true });
+    }
   });
 });

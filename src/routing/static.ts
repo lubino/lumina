@@ -54,8 +54,11 @@ export function resolveStaticFile(
     return { kind: "denied" };
   }
 
+  // Only inspect the path *inside* the domain root. Checking the absolute
+  // filesystem path would false-positive deny git-backed sites stored under
+  // …/git-cache/<domain>/ (segment "git-cache" is blocked for URL traversal).
   const rel = relative(domainRoot, safe);
-  if (isDeniedFsPath(rel).denied || isDeniedFsPath(safe).denied) {
+  if (isDeniedFsPath(rel).denied) {
     return { kind: "denied" };
   }
 
