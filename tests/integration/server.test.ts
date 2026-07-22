@@ -39,6 +39,8 @@ describe("Lumina integration", () => {
     const html = await res.text();
     expect(html).toContain("example.com");
     expect(res.headers.get("X-Lumina-Domain")).toBe("example.com");
+    // Prevent CDN/browser from serving stale bodies after git pull
+    expect(res.headers.get("Cache-Control")).toBe("no-cache");
   });
 
   test("serves alias www.example.com from same root", async () => {
@@ -59,6 +61,7 @@ describe("Lumina integration", () => {
     const res = await request("/assets/style.css", "example.com");
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toContain("text/css");
+    expect(res.headers.get("Cache-Control")).toBe("no-cache");
     const css = await res.text();
     expect(css).toContain("color-scheme");
   });

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { resolveStaticFile } from "../../src/routing/static";
+import { resolveStaticFile, serveStaticFile } from "../../src/routing/static";
 
 const domainRoot = join(import.meta.dir, "../../examples/domains/example.com");
 
@@ -33,6 +33,20 @@ describe("resolveStaticFile", () => {
   test("finds css asset", () => {
     const r = resolveStaticFile(domainRoot, "/assets/style.css");
     expect(r.kind).toBe("file");
+  });
+
+  test("serveStaticFile sets Cache-Control no-cache for HTML and assets", async () => {
+    const html = await serveStaticFile(domainRoot, "/");
+    expect(html).not.toBeNull();
+    expect(html!.status).toBe(200);
+    expect(html!.headers.get("Cache-Control")).toBe("no-cache");
+    expect(html!.headers.get("Content-Type")).toContain("text/html");
+
+    const css = await serveStaticFile(domainRoot, "/assets/style.css");
+    expect(css).not.toBeNull();
+    expect(css!.status).toBe(200);
+    expect(css!.headers.get("Cache-Control")).toBe("no-cache");
+    expect(css!.headers.get("Content-Type")).toContain("text/css");
   });
 
   test("serves index from domain root under a git-cache parent path", () => {

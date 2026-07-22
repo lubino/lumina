@@ -119,7 +119,7 @@ User-facing behavior and deploy examples: [`README.md`](./README.md).
 | Dynamic routes | Custom file→pattern mapper (`[id]`, `[...slug]`) + dynamic import |
 | Watch | `fs.watch` (debounced) |
 | Git | `git` CLI via `Bun.spawn` |
-| Image | Multi-stage Dockerfile → slim runtime, no install on start |
+| Image | Multi-stage Dockerfile → Alpine runtime (+ git), no install on start |
 
 ---
 
@@ -403,5 +403,92 @@ When resuming: read this file + README + ENDPOINTS.md; do not re-open closed pro
 
 ---
 
-**Status:** Core server shipped; CI publishes multi-arch images; operator and endpoint docs in place.  
+## Production server ops — Swiss (auto-load this every session)
+
+**Purpose:** Any agent working in this repo may control / configure the live Lumina instance on the user’s server without the user re-explaining topology. **Never commit real git tokens or webhook secrets into git**; read them from the server config when needed, do not paste them into commits or public docs.
+
+### Access
+
+| Item | Value |
+|------|--------|
+| SSH | `ssh swiss` (alias already configured on the maintainer machine) |
+| OS user | `rpi` |
+| Home | `/home/rpi` |
+| Lumina host data | `/home/rpi/docker/lumina/` |
+| Orchestration | Portainer stack on this host (compose-style); image from GHCR |
+
+```bash
+ssh swiss '…'   # preferred non-interactive form
+```
+
+### On-disk layout (host)
+
+```text
+/home/rpi/docker/lumina/
+├── config.yml          # LIVE config (LUMINA_CONFIG target)
+├── domains/            # usually empty — sites are git-backed
+└── git-cache/          # clones; must be writable by container UID (~999)
+    ├── cc10.cz/
+    └── lalen.implcode.com/
+```
+
+### Typical container env / mounts (Portainer)
+
+| Env | Typical value |
+|-----|----------------|
+| `LUMINA_CONFIG` | `/config/config.yml` (or `/data/config.yml` if mounted that way — **match the volume**) |
+| `LUMINA_DOMAINS_DIR` | `/data/domains` |
+| `LUMINA_GIT_CACHE_DIR` | `/data/git-cache` |
+| `LUMINA_PORT` | `3030` |
+| Ports | `3030:3030` |
+| Image | `ghcr.io/lubino/lumina:latest` |
+
+Bind mounts (example):
+
+```text
+host config.yml  →  container config path (file→file, not directory)
+host domains/    →  /data/domains
+host git-cache/  →  /data/git-cache  (rw, not :ro)
+```
+
+### Live domains (as last known from server config)
+
+| Domain | Source | Branch | Poll | Webhook | Notes |
+|--------|--------|--------|------|---------|--------|
+| `cc10.cz` | Forgejo `lubino/cc10.cz.git` | `main` | off (0) | yes (`webhook_secret` in config) | static site in repo root (`index.html`, css/, js/) |
+| `lalen.implcode.com` | Forgejo `lubino/lalenfasion.git` | `main` | **off** (`poll_seconds: 0`) | yes | static site in repo root; poll was disabled by request |
+
+Secrets (`git.url` tokens, `webhook_secret`) live **only** in `/home/rpi/docker/lumina/config.yml` on the server — read via SSH when operating; never copy into the git repo.
+
+### How to configure (agent procedures)
+
+1. **Read config:**  
+   `ssh swiss 'cat /home/rpi/docker/lumina/config.yml'`
+2. **Edit config carefully** (prefer scripted edit that preserves structure; keep tokens on server only):  
+   `ssh swiss` + edit `/home/rpi/docker/lumina/config.yml`
+3. **Hot reload:** if `LUMINA_WATCH` is on (default), saving config is enough; otherwise recreate/restart the Portainer container/stack.
+4. **Inspect git working trees:**  
+   `ssh swiss 'ls -la /home/rpi/docker/lumina/git-cache/<domain>/'`
+5. **Logs:** Portainer container logs, or `docker logs` on swiss if CLI available.
+6. **Webhook test (from internet / CF):**  
+   `POST https://<public-host>/_lumina/hooks/git` with that domain’s `webhook_secret` (header `X-Lumina-Webhook-Secret` or forge-native signature).
+7. **Image update:** wait for CI multi-arch publish; on Portainer **pull + redeploy** (not mere restart).
+8. **Public sites** often sit behind Cloudflare; direct `:3030` may not be open from WAN.
+
+### Known product constraints when operating Swiss
+
+- No `server:` block in YAML; listen only via env.  
+- Unknown Host → HTML 404 **without** listing other hostnames.  
+- Git sites must not be false-denied because of parent path `git-cache` (fixed in 0.1.4+).  
+- Private git: token in `git.url` is the deployed pattern; rotate if leaked to chat/logs.
+
+### What not to do
+
+- Do not commit `/home/rpi/docker/lumina/config.yml` or paste live tokens into README/agents samples.  
+- Do not `chmod 777` casually in docs as the only advice — prefer `chown` to container UID (`docker run --rm --entrypoint id ghcr.io/lubino/lumina:latest`).  
+- Do not assume `domains/` has content — current Swiss setup is git-cache only.
+
+---
+
+**Status:** Core server shipped; CI publishes multi-arch images; operator and endpoint docs in place; Swiss production ops documented above for auto-load.  
 **Priority:** Keep operator README accurate; never reintroduce git-cache absolute-path deny; mask secrets in logs next.

@@ -121,11 +121,16 @@ export async function serveStaticFile(
     return null;
   }
 
+  // Force revalidation at browsers and CDNs (Cloudflare, etc.).
+  // Without this, Cloudflare defaults to caching static extensions for 4h
+  // when origin omits Cache-Control — so git-updated CSS/JS/images stay stale
+  // while new paths work immediately.
   return new Response(file, {
     status: 200,
     headers: {
       "Content-Type": result.contentType,
       "X-Content-Type-Options": "nosniff",
+      "Cache-Control": "no-cache",
     },
   });
 }
