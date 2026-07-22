@@ -1,4 +1,5 @@
 import type { ResolvedConfig, ResolvedDomain } from "./config/types";
+import { DYNAMIC_CACHE_CONTROL_DEFAULT } from "./caching/http-cache";
 import type { GitWebhookCoalescer } from "./git/coalesce";
 import { GIT_WEBHOOK_PATH, handleGitWebhook } from "./git/webhook";
 import { logger } from "./logging/logger";
@@ -85,7 +86,11 @@ export class LuminaApp {
       try {
         const dynamic = await table.handle(request, pathname);
         if (dynamic) {
-          return withDomainHeaders(dynamic, domain, hostInfo.host);
+          return withDomainHeaders(
+            ensureDynamicCacheDefault(dynamic),
+            domain,
+            hostInfo.host,
+          );
         }
       } catch (err) {
         logger.error("Dynamic route error", {
@@ -97,7 +102,11 @@ export class LuminaApp {
       }
     }
 
-    const staticResponse = await serveStaticFile(domain.root, pathname);
+    const staticResponse = await serveStaticFile(
+      domain.root,
+      pathname,
+      request,
+    );
     if (staticResponse) {
       return withDomainHeaders(staticResponse, domain, hostInfo.host);
     }
@@ -114,6 +123,24 @@ export class LuminaApp {
     }
     return handleGitWebhook(request, this.config, this.gitWebhook.coalescer);
   }
+}
+
+/**
+ * Dynamic routes are not filesystem-stable. If the handler omitted
+ * Cache-Control, default to private no-store so CDNs never treat them as
+ * long-lived static assets. Explicit handler headers always win.
+ */
+function ensureDynamicCacheDefault(response: Response): Response {
+  if (response.headers.has("Cache-Control")) {
+    return response;
+  }
+  const headers = new Headers(response.headers);
+  headers.set("Cache-Control", DYNAMIC_CACHE_CONTROL_DEFAULT);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 function withDomainHeaders(

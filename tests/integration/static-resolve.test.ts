@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import {
+  mkdirSync,
+  writeFileSync,
+  rmSync,
+  utimesSync,
+  statSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { STATIC_CACHE_CONTROL } from "../../src/caching/http-cache";
 import { resolveStaticFile, serveStaticFile } from "../../src/routing/static";
 
 const domainRoot = join(import.meta.dir, "../../examples/domains/example.com");
@@ -35,18 +42,73 @@ describe("resolveStaticFile", () => {
     expect(r.kind).toBe("file");
   });
 
-  test("serveStaticFile sets Cache-Control no-cache for HTML and assets", async () => {
+  test("serveStaticFile sets revalidate cache headers and validators", async () => {
     const html = await serveStaticFile(domainRoot, "/");
     expect(html).not.toBeNull();
     expect(html!.status).toBe(200);
-    expect(html!.headers.get("Cache-Control")).toBe("no-cache");
+    expect(html!.headers.get("Cache-Control")).toBe(STATIC_CACHE_CONTROL);
     expect(html!.headers.get("Content-Type")).toContain("text/html");
+    expect(html!.headers.get("ETag")).toMatch(/^"[0-9a-f]+-[0-9a-f]+"$/);
+    expect(html!.headers.get("Last-Modified")).toBeTruthy();
 
     const css = await serveStaticFile(domainRoot, "/assets/style.css");
     expect(css).not.toBeNull();
     expect(css!.status).toBe(200);
-    expect(css!.headers.get("Cache-Control")).toBe("no-cache");
+    expect(css!.headers.get("Cache-Control")).toBe(STATIC_CACHE_CONTROL);
     expect(css!.headers.get("Content-Type")).toContain("text/css");
+    expect(css!.headers.get("ETag")).toMatch(/^"[0-9a-f]+-[0-9a-f]+"$/);
+  });
+
+  test("serveStaticFile returns 304 when If-None-Match matches", async () => {
+    const first = await serveStaticFile(domainRoot, "/assets/style.css");
+    expect(first!.status).toBe(200);
+    const etag = first!.headers.get("ETag")!;
+    const body = await first!.text();
+    expect(body.length).toBeGreaterThan(0);
+
+    const cond = new Request("http://example.com/assets/style.css", {
+      headers: { "If-None-Match": etag },
+    });
+    const second = await serveStaticFile(
+      domainRoot,
+      "/assets/style.css",
+      cond,
+    );
+    expect(second!.status).toBe(304);
+    expect(second!.headers.get("ETag")).toBe(etag);
+    expect(second!.headers.get("Cache-Control")).toBe(STATIC_CACHE_CONTROL);
+    expect(await second!.text()).toBe("");
+  });
+
+  test("serveStaticFile returns 200 with new ETag after file changes", async () => {
+    const root = join(tmpdir(), `lumina-static-etag-${Date.now()}`);
+    mkdirSync(root, { recursive: true });
+    const filePath = join(root, "asset.txt");
+    writeFileSync(filePath, "v1\n");
+    // Stable mtime so first response is deterministic
+    utimesSync(filePath, 1_600_000_000, 1_600_000_000);
+
+    try {
+      const first = await serveStaticFile(root, "/asset.txt");
+      expect(first!.status).toBe(200);
+      const etag1 = first!.headers.get("ETag")!;
+      expect(await first!.text()).toBe("v1\n");
+
+      writeFileSync(filePath, "v2-longer\n");
+      utimesSync(filePath, 1_700_000_000, 1_700_000_000);
+      expect(statSync(filePath).size).not.toBe(3); // content grew
+
+      const cond = new Request("http://x/asset.txt", {
+        headers: { "If-None-Match": etag1 },
+      });
+      const second = await serveStaticFile(root, "/asset.txt", cond);
+      expect(second!.status).toBe(200);
+      const etag2 = second!.headers.get("ETag")!;
+      expect(etag2).not.toBe(etag1);
+      expect(await second!.text()).toBe("v2-longer\n");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test("serves index from domain root under a git-cache parent path", () => {

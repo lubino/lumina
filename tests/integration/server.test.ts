@@ -39,8 +39,12 @@ describe("Lumina integration", () => {
     const html = await res.text();
     expect(html).toContain("example.com");
     expect(res.headers.get("X-Lumina-Domain")).toBe("example.com");
-    // Prevent CDN/browser from serving stale bodies after git pull
-    expect(res.headers.get("Cache-Control")).toBe("no-cache");
+    // Revalidate always so CDNs/browsers do not keep stale bodies after git pull
+    expect(res.headers.get("Cache-Control")).toBe(
+      "public, max-age=0, must-revalidate",
+    );
+    expect(res.headers.get("ETag")).toMatch(/^"[0-9a-f]+-[0-9a-f]+"$/);
+    expect(res.headers.get("Last-Modified")).toBeTruthy();
   });
 
   test("serves alias www.example.com from same root", async () => {
@@ -61,9 +65,27 @@ describe("Lumina integration", () => {
     const res = await request("/assets/style.css", "example.com");
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toContain("text/css");
-    expect(res.headers.get("Cache-Control")).toBe("no-cache");
+    expect(res.headers.get("Cache-Control")).toBe(
+      "public, max-age=0, must-revalidate",
+    );
     const css = await res.text();
     expect(css).toContain("color-scheme");
+  });
+
+  test("static conditional GET returns 304 when ETag matches", async () => {
+    const first = await request("/assets/style.css", "example.com");
+    expect(first.status).toBe(200);
+    const etag = first.headers.get("ETag");
+    expect(etag).toBeTruthy();
+    await first.text();
+
+    const second = await request("/assets/style.css", "example.com", {
+      headers: { "If-None-Match": etag! },
+    });
+    expect(second.status).toBe(304);
+    expect(second.headers.get("ETag")).toBe(etag);
+    expect(second.headers.get("X-Lumina-Domain")).toBe("example.com");
+    expect(await second.text()).toBe("");
   });
 
   test("dynamic /api route", async () => {
@@ -72,6 +94,8 @@ describe("Lumina integration", () => {
     const body = (await res.json()) as { ok: boolean; route: string };
     expect(body.ok).toBe(true);
     expect(body.route).toBe("/api");
+    // Handlers that omit Cache-Control get a safe default (not public static)
+    expect(res.headers.get("Cache-Control")).toBe("private, no-store");
   });
 
   test("dynamic /hello/:name route", async () => {

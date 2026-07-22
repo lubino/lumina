@@ -1,5 +1,11 @@
 import { statSync } from "node:fs";
 import { join, relative } from "node:path";
+import {
+  fileETag,
+  isNotModified,
+  STATIC_CACHE_CONTROL,
+  toHttpDate,
+} from "../caching/http-cache";
 import { resolveSafePath } from "../security/path-safe";
 import { isDeniedFsPath, isDeniedUrlPath } from "../security/deny-paths";
 
@@ -104,9 +110,15 @@ export function resolveStaticFile(
   }
 }
 
+/**
+ * Serve a static file with identity-based cache validators.
+ * Clients/CDNs may store the body but must revalidate (max-age=0).
+ * Conditional GET/HEAD with matching ETag / If-Modified-Since → 304.
+ */
 export async function serveStaticFile(
   domainRoot: string,
   pathname: string,
+  request?: Request | null,
 ): Promise<Response | null> {
   const result = resolveStaticFile(domainRoot, pathname);
   if (result.kind === "denied") {
@@ -116,21 +128,45 @@ export async function serveStaticFile(
     return null;
   }
 
+  let st: ReturnType<typeof statSync>;
+  try {
+    st = statSync(result.path);
+  } catch {
+    return null;
+  }
+  if (!st.isFile()) {
+    return null;
+  }
+
+  const etag = fileETag(st.mtimeMs, st.size);
+  const lastModified = toHttpDate(st.mtimeMs);
+  const commonHeaders: Record<string, string> = {
+    ETag: etag,
+    "Last-Modified": lastModified,
+    "Cache-Control": STATIC_CACHE_CONTROL,
+    "X-Content-Type-Options": "nosniff",
+  };
+
+  // Revalidate always: browsers/CDNs keep a copy, ask origin before reuse.
+  // Without Cache-Control, Cloudflare often caches static extensions ~4h so
+  // git-updated CSS/JS/images stay stale while new paths work immediately.
+  if (isNotModified(request, etag, st.mtimeMs)) {
+    return new Response(null, {
+      status: 304,
+      headers: commonHeaders,
+    });
+  }
+
   const file = Bun.file(result.path);
   if (!(await file.exists())) {
     return null;
   }
 
-  // Force revalidation at browsers and CDNs (Cloudflare, etc.).
-  // Without this, Cloudflare defaults to caching static extensions for 4h
-  // when origin omits Cache-Control — so git-updated CSS/JS/images stay stale
-  // while new paths work immediately.
   return new Response(file, {
     status: 200,
     headers: {
       "Content-Type": result.contentType,
-      "X-Content-Type-Options": "nosniff",
-      "Cache-Control": "no-cache",
+      ...commonHeaders,
     },
   });
 }
