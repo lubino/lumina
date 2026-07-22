@@ -96,14 +96,19 @@ describe("Lumina integration", () => {
     const etag1 = first.headers.get("ETag")!;
     await first.text();
 
-    const cssPath = `${domain.root}/assets/style.css`;
+    // Use join so meta lookup matches StaticMetaCache.normalize (absolute keys)
+    const cssPath = join(domain.root, "assets", "style.css");
     expect(lumina.app.staticMeta.getMeta(cssPath, domain.root)).not.toBeNull();
+    expect(lumina.app.staticMeta.generation(domain.root)).toBeGreaterThanOrEqual(
+      0,
+    );
 
     const genBefore = lumina.app.staticMeta.generation(domain.root);
     await lumina.app.reloadDomainRoutes("example.com");
     const genAfter = lumina.app.staticMeta.generation(domain.root);
     expect(genAfter).toBe(genBefore + 1);
-    // Meta for this root is dropped (other domains may still hold entries)
+    // Meta for this root is dropped (other domains may still hold entries —
+    // do not assert global cache.size() === 0).
     expect(lumina.app.staticMeta.getMeta(cssPath, domain.root)).toBeNull();
 
     const second = await request("/assets/style.css", "example.com");
@@ -111,6 +116,8 @@ describe("Lumina integration", () => {
     // Same file on disk → same ETag after re-stat
     expect(second.headers.get("ETag")).toBe(etag1);
     await second.text();
+    // Entry is populated again after the re-fetch
+    expect(lumina.app.staticMeta.getMeta(cssPath, domain.root)).not.toBeNull();
   });
 
   test("dynamic /api route", async () => {
