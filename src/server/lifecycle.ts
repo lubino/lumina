@@ -154,6 +154,10 @@ export async function startLuminaServer(
   };
 }
 
+/**
+ * One debounced watcher per unique domain root so we know which tree changed
+ * and only bump that root's static-meta generation + route tables.
+ */
 function createContentWatchers(app: LuminaApp) {
   let closer: (() => void) | null = null;
 
@@ -163,17 +167,24 @@ function createContentWatchers(app: LuminaApp) {
     },
     restart(config: ResolvedConfig) {
       if (closer) closer();
-      const roots = [...config.domains.values()].map((d) => d.root);
-      const unique = [...new Set(roots)];
-      const watcher = createDebouncedWatcher(
-        unique,
-        async (_event, filename) => {
-          logger.debug("Content change", { filename });
-          await app.reloadDomainRoutes();
-        },
-        120,
-      );
-      closer = () => watcher.close();
+      const roots = [
+        ...new Set([...config.domains.values()].map((d) => d.root)),
+      ];
+      const closers: Array<() => void> = [];
+      for (const root of roots) {
+        const watcher = createDebouncedWatcher(
+          [root],
+          async (_event, filename) => {
+            logger.debug("Content change", { root, filename });
+            await app.onDomainContentChanged(root, filename);
+          },
+          120,
+        );
+        closers.push(() => watcher.close());
+      }
+      closer = () => {
+        for (const c of closers) c();
+      };
     },
     stop() {
       if (closer) closer();

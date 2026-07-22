@@ -1,5 +1,7 @@
+import { join } from "node:path";
 import type { ResolvedConfig, ResolvedDomain } from "./config/types";
 import { DYNAMIC_CACHE_CONTROL_DEFAULT } from "./caching/http-cache";
+import { StaticMetaCache } from "./caching/static-meta";
 import type { GitWebhookCoalescer } from "./git/coalesce";
 import { GIT_WEBHOOK_PATH, handleGitWebhook } from "./git/webhook";
 import { logger } from "./logging/logger";
@@ -15,6 +17,8 @@ export interface GitWebhookDeps {
 export class LuminaApp {
   private routeTables = new Map<string, DomainRouteTable>();
   private gitWebhook: GitWebhookDeps | null = null;
+  /** Per-app static file meta cache (generation-invalidated). */
+  readonly staticMeta = new StaticMetaCache();
 
   constructor(private config: ResolvedConfig) {}
 
@@ -32,20 +36,68 @@ export class LuminaApp {
   }
 
   async applyConfig(config: ResolvedConfig): Promise<void> {
+    // Drop static meta for old and new roots (roots may change on reload).
+    this.bumpStaticMetaForConfig(this.config);
     this.config = config;
+    this.bumpStaticMetaForConfig(config);
     await this.rebuildRoutes(config);
   }
 
+  /**
+   * Reload dynamic route tables after content or git changes.
+   * Always bumps static meta generation for the affected domain root(s)
+   * so ETag/mtime caches do not outlive the tree on disk.
+   */
   async reloadDomainRoutes(domainName?: string): Promise<void> {
     if (domainName) {
       const domain = this.config.domains.get(domainName);
       if (!domain) return;
+      this.staticMeta.bumpGeneration(domain.root);
       const table = createRouteTable(domain);
       await table.reload();
       this.routeTables.set(domainName, table);
       return;
     }
+    this.bumpStaticMetaForConfig(this.config);
     await this.rebuildRoutes(this.config);
+  }
+
+  /**
+   * FS watch fired under a domain root. Invalidate static meta for that root
+   * and reload route tables for every domain that shares it (aliases / shared root).
+   */
+  async onDomainContentChanged(
+    root: string,
+    filename: string | null,
+  ): Promise<void> {
+    if (filename) {
+      // Fine-grained drop; generation bump below still clears residual entries.
+      this.staticMeta.invalidatePath(join(root, filename));
+    }
+    this.staticMeta.bumpGeneration(root);
+
+    for (const domain of this.config.domains.values()) {
+      if (!this.staticMeta.sameRoot(domain.root, root)) continue;
+      const table = createRouteTable(domain);
+      await table.reload();
+      this.routeTables.set(domain.name, table);
+    }
+
+    logger.debug("Content change applied", {
+      root,
+      filename,
+      generation: this.staticMeta.generation(root),
+    });
+  }
+
+  private bumpStaticMetaForConfig(config: ResolvedConfig): void {
+    const seen = new Set<string>();
+    for (const domain of config.domains.values()) {
+      const key = this.staticMeta.normalize(domain.root);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      this.staticMeta.bumpGeneration(domain.root);
+    }
   }
 
   private async rebuildRoutes(config: ResolvedConfig): Promise<void> {
@@ -106,6 +158,7 @@ export class LuminaApp {
       domain.root,
       pathname,
       request,
+      this.staticMeta,
     );
     if (staticResponse) {
       return withDomainHeaders(staticResponse, domain, hostInfo.host);

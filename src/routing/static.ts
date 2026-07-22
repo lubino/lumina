@@ -1,13 +1,18 @@
 import { statSync } from "node:fs";
 import { join, relative } from "node:path";
 import {
-  fileETag,
   isNotModified,
   STATIC_CACHE_CONTROL,
-  toHttpDate,
 } from "../caching/http-cache";
+import {
+  StaticMetaCache,
+  type FileMeta,
+} from "../caching/static-meta";
 import { resolveSafePath } from "../security/path-safe";
 import { isDeniedFsPath, isDeniedUrlPath } from "../security/deny-paths";
+
+/** Used when callers omit a cache (unit tests of resolve/serve in isolation). */
+const fallbackMetaCache = new StaticMetaCache();
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -114,11 +119,15 @@ export function resolveStaticFile(
  * Serve a static file with identity-based cache validators.
  * Clients/CDNs may store the body but must revalidate (max-age=0).
  * Conditional GET/HEAD with matching ETag / If-Modified-Since → 304.
+ *
+ * File mtime/size are cached in `metaCache` until the domain-root generation
+ * is bumped (content watch, git sync, config reload).
  */
 export async function serveStaticFile(
   domainRoot: string,
   pathname: string,
   request?: Request | null,
+  metaCache: StaticMetaCache = fallbackMetaCache,
 ): Promise<Response | null> {
   const result = resolveStaticFile(domainRoot, pathname);
   if (result.kind === "denied") {
@@ -128,21 +137,25 @@ export async function serveStaticFile(
     return null;
   }
 
-  let st: ReturnType<typeof statSync>;
-  try {
-    st = statSync(result.path);
-  } catch {
-    return null;
-  }
-  if (!st.isFile()) {
+  const meta = metaCache.getOrStat(
+    result.path,
+    domainRoot,
+    result.contentType,
+  );
+  if (!meta) {
     return null;
   }
 
-  const etag = fileETag(st.mtimeMs, st.size);
-  const lastModified = toHttpDate(st.mtimeMs);
+  return responseFromMeta(meta, request);
+}
+
+function responseFromMeta(
+  meta: FileMeta,
+  request?: Request | null,
+): Response {
   const commonHeaders: Record<string, string> = {
-    ETag: etag,
-    "Last-Modified": lastModified,
+    ETag: meta.etag,
+    "Last-Modified": meta.lastModified,
     "Cache-Control": STATIC_CACHE_CONTROL,
     "X-Content-Type-Options": "nosniff",
   };
@@ -150,22 +163,18 @@ export async function serveStaticFile(
   // Revalidate always: browsers/CDNs keep a copy, ask origin before reuse.
   // Without Cache-Control, Cloudflare often caches static extensions ~4h so
   // git-updated CSS/JS/images stay stale while new paths work immediately.
-  if (isNotModified(request, etag, st.mtimeMs)) {
+  if (isNotModified(request, meta.etag, meta.mtimeMs)) {
     return new Response(null, {
       status: 304,
       headers: commonHeaders,
     });
   }
 
-  const file = Bun.file(result.path);
-  if (!(await file.exists())) {
-    return null;
-  }
-
+  const file = Bun.file(meta.path);
   return new Response(file, {
     status: 200,
     headers: {
-      "Content-Type": result.contentType,
+      "Content-Type": meta.contentType,
       ...commonHeaders,
     },
   });

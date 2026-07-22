@@ -88,6 +88,30 @@ describe("Lumina integration", () => {
     expect(await second.text()).toBe("");
   });
 
+  test("reloadDomainRoutes bumps static meta so ETag is re-read from disk", async () => {
+    const domain = lumina.app.getConfig().domains.get("example.com")!;
+    const first = await request("/assets/style.css", "example.com");
+    expect(first.status).toBe(200);
+    const etag1 = first.headers.get("ETag")!;
+    await first.text();
+
+    const cssPath = `${domain.root}/assets/style.css`;
+    expect(lumina.app.staticMeta.getMeta(cssPath, domain.root)).not.toBeNull();
+
+    const genBefore = lumina.app.staticMeta.generation(domain.root);
+    await lumina.app.reloadDomainRoutes("example.com");
+    const genAfter = lumina.app.staticMeta.generation(domain.root);
+    expect(genAfter).toBe(genBefore + 1);
+    // Meta for this root is dropped (other domains may still hold entries)
+    expect(lumina.app.staticMeta.getMeta(cssPath, domain.root)).toBeNull();
+
+    const second = await request("/assets/style.css", "example.com");
+    expect(second.status).toBe(200);
+    // Same file on disk → same ETag after re-stat
+    expect(second.headers.get("ETag")).toBe(etag1);
+    await second.text();
+  });
+
   test("dynamic /api route", async () => {
     const res = await request("/api", "example.com");
     expect(res.status).toBe(200);

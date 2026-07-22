@@ -9,6 +9,7 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { STATIC_CACHE_CONTROL } from "../../src/caching/http-cache";
+import { StaticMetaCache } from "../../src/caching/static-meta";
 import { resolveStaticFile, serveStaticFile } from "../../src/routing/static";
 
 const domainRoot = join(import.meta.dir, "../../examples/domains/example.com");
@@ -87,21 +88,26 @@ describe("resolveStaticFile", () => {
     writeFileSync(filePath, "v1\n");
     // Stable mtime so first response is deterministic
     utimesSync(filePath, 1_600_000_000, 1_600_000_000);
+    const cache = new StaticMetaCache();
 
     try {
-      const first = await serveStaticFile(root, "/asset.txt");
+      const first = await serveStaticFile(root, "/asset.txt", null, cache);
       expect(first!.status).toBe(200);
       const etag1 = first!.headers.get("ETag")!;
       expect(await first!.text()).toBe("v1\n");
+      expect(cache.size()).toBe(1);
 
       writeFileSync(filePath, "v2-longer\n");
       utimesSync(filePath, 1_700_000_000, 1_700_000_000);
       expect(statSync(filePath).size).not.toBe(3); // content grew
 
+      // Without invalidation the meta cache would still hold v1 identity.
+      cache.bumpGeneration(root);
+
       const cond = new Request("http://x/asset.txt", {
         headers: { "If-None-Match": etag1 },
       });
-      const second = await serveStaticFile(root, "/asset.txt", cond);
+      const second = await serveStaticFile(root, "/asset.txt", cond, cache);
       expect(second!.status).toBe(200);
       const etag2 = second!.headers.get("ETag")!;
       expect(etag2).not.toBe(etag1);
