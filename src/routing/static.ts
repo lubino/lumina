@@ -1,8 +1,9 @@
 import { statSync } from "node:fs";
 import { join, relative } from "node:path";
 import {
+  cacheControlForPathname,
+  isHeadRequest,
   isNotModified,
-  STATIC_CACHE_CONTROL,
 } from "../caching/http-cache";
 import {
   StaticMetaCache,
@@ -117,11 +118,12 @@ export function resolveStaticFile(
 
 /**
  * Serve a static file with identity-based cache validators.
- * Clients/CDNs may store the body but must revalidate (max-age=0).
- * Conditional GET/HEAD with matching ETag / If-Modified-Since → 304.
  *
- * File mtime/size are cached in `metaCache` until the domain-root generation
- * is bumped (content watch, git sync, config reload).
+ * - Small files: content-hash ETag; optional in-memory body (budgeted)
+ * - Large files: mtime+size ETag; stream from disk
+ * - Fingerprinted URLs (`name.<hash>.ext`): long-lived immutable Cache-Control
+ * - Others: revalidate always (max-age=0)
+ * - Conditional GET/HEAD → 304; HEAD → same headers as GET, empty body
  */
 export async function serveStaticFile(
   domainRoot: string,
@@ -146,23 +148,22 @@ export async function serveStaticFile(
     return null;
   }
 
-  return responseFromMeta(meta, request);
+  return responseFromMeta(meta, pathname, request);
 }
 
 function responseFromMeta(
   meta: FileMeta,
+  pathname: string,
   request?: Request | null,
 ): Response {
+  const cacheControl = cacheControlForPathname(pathname);
   const commonHeaders: Record<string, string> = {
     ETag: meta.etag,
     "Last-Modified": meta.lastModified,
-    "Cache-Control": STATIC_CACHE_CONTROL,
+    "Cache-Control": cacheControl,
     "X-Content-Type-Options": "nosniff",
   };
 
-  // Revalidate always: browsers/CDNs keep a copy, ask origin before reuse.
-  // Without Cache-Control, Cloudflare often caches static extensions ~4h so
-  // git-updated CSS/JS/images stay stale while new paths work immediately.
   if (isNotModified(request, meta.etag, meta.mtimeMs)) {
     return new Response(null, {
       status: 304,
@@ -170,12 +171,30 @@ function responseFromMeta(
     });
   }
 
+  const headers: Record<string, string> = {
+    "Content-Type": meta.contentType,
+    "Content-Length": String(meta.size),
+    ...commonHeaders,
+  };
+
+  if (isHeadRequest(request)) {
+    return new Response(null, {
+      status: 200,
+      headers,
+    });
+  }
+
+  if (meta.body) {
+    // Copy so callers cannot mutate the cached buffer
+    return new Response(meta.body.slice(), {
+      status: 200,
+      headers,
+    });
+  }
+
   const file = Bun.file(meta.path);
   return new Response(file, {
     status: 200,
-    headers: {
-      "Content-Type": meta.contentType,
-      ...commonHeaders,
-    },
+    headers,
   });
 }

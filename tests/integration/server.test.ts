@@ -43,7 +43,8 @@ describe("Lumina integration", () => {
     expect(res.headers.get("Cache-Control")).toBe(
       "public, max-age=0, must-revalidate",
     );
-    expect(res.headers.get("ETag")).toMatch(/^"[0-9a-f]+-[0-9a-f]+"$/);
+    // Small HTML uses content-hash ETag
+    expect(res.headers.get("ETag")).toMatch(/^"h[0-9a-f]{16}"$/);
     expect(res.headers.get("Last-Modified")).toBeTruthy();
   });
 

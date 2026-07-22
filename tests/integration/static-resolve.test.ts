@@ -8,11 +8,17 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { STATIC_CACHE_CONTROL } from "../../src/caching/http-cache";
+import {
+  IMMUTABLE_CACHE_CONTROL,
+  STATIC_CACHE_CONTROL,
+} from "../../src/caching/http-cache";
 import { StaticMetaCache } from "../../src/caching/static-meta";
 import { resolveStaticFile, serveStaticFile } from "../../src/routing/static";
 
 const domainRoot = join(import.meta.dir, "../../examples/domains/example.com");
+
+/** Small files use content-hash ETags (`"h…"`); large use mtime-size. */
+const ETAG_RE = /^"(?:h[0-9a-f]{16}|[0-9a-f]+-[0-9a-f]+)"$/;
 
 describe("resolveStaticFile", () => {
   test("finds index.html for /", () => {
@@ -49,15 +55,17 @@ describe("resolveStaticFile", () => {
     expect(html!.status).toBe(200);
     expect(html!.headers.get("Cache-Control")).toBe(STATIC_CACHE_CONTROL);
     expect(html!.headers.get("Content-Type")).toContain("text/html");
-    expect(html!.headers.get("ETag")).toMatch(/^"[0-9a-f]+-[0-9a-f]+"$/);
+    expect(html!.headers.get("ETag")).toMatch(ETAG_RE);
     expect(html!.headers.get("Last-Modified")).toBeTruthy();
+    // Small files use content-hash ETags
+    expect(html!.headers.get("ETag")).toMatch(/^"h[0-9a-f]{16}"$/);
 
     const css = await serveStaticFile(domainRoot, "/assets/style.css");
     expect(css).not.toBeNull();
     expect(css!.status).toBe(200);
     expect(css!.headers.get("Cache-Control")).toBe(STATIC_CACHE_CONTROL);
     expect(css!.headers.get("Content-Type")).toContain("text/css");
-    expect(css!.headers.get("ETag")).toMatch(/^"[0-9a-f]+-[0-9a-f]+"$/);
+    expect(css!.headers.get("ETag")).toMatch(ETAG_RE);
   });
 
   test("serveStaticFile returns 304 when If-None-Match matches", async () => {
@@ -112,6 +120,83 @@ describe("resolveStaticFile", () => {
       const etag2 = second!.headers.get("ETag")!;
       expect(etag2).not.toBe(etag1);
       expect(await second!.text()).toBe("v2-longer\n");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("fingerprinted asset gets immutable long-cache Cache-Control", async () => {
+    const root = join(tmpdir(), `lumina-fp-${Date.now()}`);
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, "app.a1b2c3d4e5f67890.js"), "console.log(1)\n");
+    const cache = new StaticMetaCache();
+
+    try {
+      const res = await serveStaticFile(
+        root,
+        "/app.a1b2c3d4e5f67890.js",
+        null,
+        cache,
+      );
+      expect(res!.status).toBe(200);
+      expect(res!.headers.get("Cache-Control")).toBe(IMMUTABLE_CACHE_CONTROL);
+      expect(res!.headers.get("ETag")).toMatch(/^"h[0-9a-f]{16}"$/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("HEAD returns same validators as GET with empty body", async () => {
+    const get = await serveStaticFile(domainRoot, "/assets/style.css");
+    expect(get!.status).toBe(200);
+    const body = await get!.text();
+    expect(body.length).toBeGreaterThan(0);
+
+    const head = await serveStaticFile(
+      domainRoot,
+      "/assets/style.css",
+      new Request("http://example.com/assets/style.css", { method: "HEAD" }),
+    );
+    expect(head!.status).toBe(200);
+    expect(head!.headers.get("ETag")).toBe(get!.headers.get("ETag"));
+    expect(head!.headers.get("Content-Type")).toBe(
+      get!.headers.get("Content-Type"),
+    );
+    expect(head!.headers.get("Content-Length")).toBe(String(body.length));
+    expect(await head!.text()).toBe("");
+  });
+
+  test("HEAD conditional request returns 304", async () => {
+    const get = await serveStaticFile(domainRoot, "/assets/style.css");
+    const etag = get!.headers.get("ETag")!;
+    await get!.text();
+
+    const head = await serveStaticFile(
+      domainRoot,
+      "/assets/style.css",
+      new Request("http://example.com/assets/style.css", {
+        method: "HEAD",
+        headers: { "If-None-Match": etag },
+      }),
+    );
+    expect(head!.status).toBe(304);
+    expect(await head!.text()).toBe("");
+  });
+
+  test("tiny files keep a body in the meta cache", async () => {
+    const root = join(tmpdir(), `lumina-body-${Date.now()}`);
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, "tiny.txt"), "hi\n");
+    const cache = new StaticMetaCache();
+
+    try {
+      const res = await serveStaticFile(root, "/tiny.txt", null, cache);
+      expect(res!.status).toBe(200);
+      expect(await res!.text()).toBe("hi\n");
+      const meta = cache.getMeta(join(root, "tiny.txt"), root);
+      expect(meta?.body).toBeDefined();
+      expect(meta!.body!.byteLength).toBe(3);
+      expect(cache.bodyCacheBytes()).toBe(3);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
